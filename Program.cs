@@ -14,12 +14,13 @@ namespace ConsoleApplication
     public class Program
     {
         //TODO
-        //Get top 1000 channels by viewercount by name
-        //Put 1000 names somewhere useful
-        //Connect to all 1000 chat channels
         //Identify all emotes
-        //Accrue emote counts per minute
-        //Print table of emotes (basic)
+            //start with PogChamp
+            //parse received channel messages looking for emote in PRIVMSG only
+            //store with some sort of timestamp per channel and get a count per minute
+            //store with some sort of timestamp for all channels and get a count per minute
+            //use api or find resource to get all emotes?
+            //expand statistics to all emotes
         //Handle channel streaming ending
         //Handle top 1000 changing (maybe streams with > 1000 viewers at any point?)
         static ConcurrentDictionary<long, string> concurrentDictionary = new ConcurrentDictionary<long, string>();
