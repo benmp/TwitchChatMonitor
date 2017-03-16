@@ -15,10 +15,8 @@ namespace ConsoleApplication
     {
         //TODO
         //Identify all emotes
-            //start with PogChamp
             //parse received channel messages looking for emote in PRIVMSG only
             //store with some sort of timestamp per channel and get a count per minute
-            //store with some sort of timestamp for all channels and get a count per minute
             //use api or find resource to get all emotes?
             //expand statistics to all emotes
         //Handle channel streaming ending
@@ -30,7 +28,9 @@ namespace ConsoleApplication
             //Essentially the same thing on a console app
             //Task.WaitAll(GetAPI(), ConnectIRC());
             Task.WhenAll(GetAPI()).GetAwaiter().GetResult();
-            Task.WhenAll(ConnectIRC(), PogChampPerMinute()).GetAwaiter().GetResult();
+            StatisticsService ss = new StatisticsService();
+            ss.StartService();
+            Task.WhenAll(ss.ReportStatistics(), ConnectIRC(ss)).GetAwaiter().GetResult();
 
             Console.WriteLine("Complete");
         }
@@ -76,7 +76,7 @@ namespace ConsoleApplication
             }
         }
 
-        public static async Task ConnectIRC()
+        public static async Task ConnectIRC(StatisticsService ss)
         {
             var configuration = new ConfigurationBuilder().AddIniFile(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..\\..\\..\\config.ini"))).Build();
             if (string.IsNullOrEmpty(configuration["twitchirc:servername"]) || string.IsNullOrEmpty(configuration["twitchirc:portnumber"]) ||
@@ -108,47 +108,10 @@ namespace ConsoleApplication
                             {
                                 await streamWriter.WriteLineAsync("PONG :time.twitch.tv");
                             }
-
-                            if (FoundPogChamp(readLine))
-                            {
-                                Console.WriteLine(readLine);
-                            }
+                            
+                            ss.DistributeInformation(readLine);
                         }
                     }
-                }
-            }
-        }
-
-        public static bool FoundPogChamp(string msg)
-        {
-            bool foundPogChamp = false;
-            if (msg.Contains("PogChamp"))
-            {
-                concurrentQueue.Enqueue(DateTime.Now);
-                foundPogChamp = true;
-            }
-            return foundPogChamp;
-        }
-
-        public static async Task PogChampPerMinute()
-        {
-            while (true)
-            {
-                DeQueueOldPogChamp(60);
-                Console.WriteLine($"PogChamp per minute: {concurrentQueue.Count()}");
-                await Task.Delay(1000);
-            }
-        }
-
-        public static void DeQueueOldPogChamp(byte withinNumberOfSeconds)
-        {
-            DateTime frontOfQueue = DateTime.MinValue;
-            if(concurrentQueue.TryPeek(out frontOfQueue))
-            {
-                if (DateTime.Now.Subtract(frontOfQueue).TotalSeconds > withinNumberOfSeconds)
-                {
-                    concurrentQueue.TryDequeue(out frontOfQueue);
-                    DeQueueOldPogChamp(withinNumberOfSeconds);
                 }
             }
         }
@@ -156,6 +119,96 @@ namespace ConsoleApplication
         public static string ToQueryString(Dictionary<string, string> source)
         {
             return string.Format("?{0}", String.Join("&", source.Select(kvp => String.Format("{0}={1}", kvp.Key, kvp.Value))));
+        }
+    }
+    public interface IMessageParser
+    {
+        int NumberOfOccurences(string message, string stringOfInterest);
+    }
+
+    public class WholeLineMessageParser : IMessageParser
+    {
+        public int NumberOfOccurences(string message, string stringOfInterest)
+        {
+            return message.Contains(stringOfInterest) ? 1 : 0;
+        }
+    }
+
+    public class StatisticsService
+    {
+        HashSet<IStatCruncher> iStatCrunchers = new HashSet<IStatCruncher>();
+        public void StartService()
+        {
+            List<string> emotes = new List<string>() { "PogChamp", "4Head", "BibleThump", "FrankerZ", "BabyRage", "BrokeBack", "Jebaited", "Kappa", "Kreygasm" };
+            foreach (string emote in emotes)
+            {
+                iStatCrunchers.Add(new EmoteStatCruncher(emote));
+            }
+        }
+
+        public void DistributeInformation(string information)
+        {
+            foreach (IStatCruncher iStatCruncher in iStatCrunchers)
+            {
+                iStatCruncher.TryEnqueueMessage(information);
+            }
+        }
+
+        public async Task ReportStatistics()
+        {
+            while (true)
+            {
+                Console.WriteLine();
+                foreach (IStatCruncher iStatCruncher in iStatCrunchers)
+                {
+                    iStatCruncher.ReportStatistics();
+                }
+                await Task.Delay(5000);
+            }
+        }
+    }
+
+    public interface IStatCruncher
+    {
+        void TryEnqueueMessage(string message);
+        void ReportStatistics();
+    }
+
+    public class EmoteStatCruncher : IStatCruncher
+    {
+        public EmoteStatCruncher(string stringOfInterest)
+        {
+            StringOfInterest = stringOfInterest;
+            Occurrences = new ConcurrentQueue<DateTime>();
+            MessageParser = new WholeLineMessageParser();
+        }
+        public string StringOfInterest { get; set; }
+        ConcurrentQueue<DateTime> Occurrences { get; set; }
+        IMessageParser MessageParser { get; set; }
+        void IStatCruncher.TryEnqueueMessage(string message)
+        {
+            int numberOfOccurrences = MessageParser.NumberOfOccurences(message, StringOfInterest);
+            for (int i = 0; i < numberOfOccurrences; i++)
+            {
+                Occurrences.Enqueue(DateTime.Now);
+            }
+        }
+        public void ReportStatistics()
+        {
+            RefreshStatistics();
+            Console.WriteLine($"{StringOfInterest, -10}: {Occurrences.Count}");
+        }
+        void RefreshStatistics()
+        {
+            DateTime frontOfQueue = DateTime.MinValue;
+            if(Occurrences.TryPeek(out frontOfQueue))
+            {
+                if (DateTime.Now.Subtract(frontOfQueue).TotalSeconds > 60)
+                {
+                    Occurrences.TryDequeue(out frontOfQueue);
+                    RefreshStatistics();
+                }
+            }
         }
     }
 }
