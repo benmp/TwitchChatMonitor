@@ -24,12 +24,13 @@ namespace ConsoleApplication
         //Handle channel streaming ending
         //Handle top 1000 changing (maybe streams with > 1000 viewers at any point?)
         static ConcurrentDictionary<long, string> concurrentDictionary = new ConcurrentDictionary<long, string>();
+        static ConcurrentQueue<DateTime> concurrentQueue = new ConcurrentQueue<DateTime>();
         public static void Main(string[] args)
         {
             //Essentially the same thing on a console app
             //Task.WaitAll(GetAPI(), ConnectIRC());
             Task.WhenAll(GetAPI()).GetAwaiter().GetResult();
-            Task.WhenAll(ConnectIRC()).GetAwaiter().GetResult();
+            Task.WhenAll(ConnectIRC(), PogChampPerMinute()).GetAwaiter().GetResult();
 
             Console.WriteLine("Complete");
         }
@@ -107,9 +108,47 @@ namespace ConsoleApplication
                             {
                                 await streamWriter.WriteLineAsync("PONG :time.twitch.tv");
                             }
-                            Console.WriteLine(readLine);
+
+                            if (FoundPogChamp(readLine))
+                            {
+                                Console.WriteLine(readLine);
+                            }
                         }
                     }
+                }
+            }
+        }
+
+        public static bool FoundPogChamp(string msg)
+        {
+            bool foundPogChamp = false;
+            if (msg.Contains("PogChamp"))
+            {
+                concurrentQueue.Enqueue(DateTime.Now);
+                foundPogChamp = true;
+            }
+            return foundPogChamp;
+        }
+
+        public static async Task PogChampPerMinute()
+        {
+            while (true)
+            {
+                DeQueueOldPogChamp(60);
+                Console.WriteLine($"PogChamp per minute: {concurrentQueue.Count()}");
+                await Task.Delay(1000);
+            }
+        }
+
+        public static void DeQueueOldPogChamp(byte withinNumberOfSeconds)
+        {
+            DateTime frontOfQueue = DateTime.MinValue;
+            if(concurrentQueue.TryPeek(out frontOfQueue))
+            {
+                if (DateTime.Now.Subtract(frontOfQueue).TotalSeconds > withinNumberOfSeconds)
+                {
+                    concurrentQueue.TryDequeue(out frontOfQueue);
+                    DeQueueOldPogChamp(withinNumberOfSeconds);
                 }
             }
         }
