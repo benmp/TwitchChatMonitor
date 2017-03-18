@@ -29,8 +29,8 @@ namespace ConsoleApplication
         //refactor classes
 
         // Console.WriteLine("Request URL before await : " + Thread.CurrentThread.ManagedThreadId);
-        static ConcurrentDictionary<long, string> concurrentDictionary = new ConcurrentDictionary<long, string>();
-        static ConcurrentQueue<DateTime> concurrentQueue = new ConcurrentQueue<DateTime>();
+        public static ConcurrentDictionary<long, string> concurrentDictionary = new ConcurrentDictionary<long, string>();
+        public static ConcurrentQueue<DateTime> concurrentQueue = new ConcurrentQueue<DateTime>();
 
         public static void Main(string[] args)
         {
@@ -44,18 +44,32 @@ namespace ConsoleApplication
             Console.WriteLine("Complete");
         }
 
-        public static async Task MainAsync()
+        public static async Task<string> MainAsync()
         {
             #if debug
             Console.WriteLine("Main thread before GetAPI await : " + Thread.CurrentThread.ManagedThreadId);
             #endif
-            await GetAPI();
+
+            TwitchAPI twitchAPI = new TwitchAPI();
+            twitchAPI.BuildConfiguration();
+            twitchAPI.SetupHttpClient();
+
+            bool success = await twitchAPI.BuildChannelDictionary();
+            if (!success)
+            {
+                return "Error connecting to API";
+            }
+
             #if debug
             Console.WriteLine("Main thread after GetAPI await : " + Thread.CurrentThread.ManagedThreadId);
             #endif
 
             StatisticsService ss = new StatisticsService();
-            ss.StartService();
+            success = await ss.StartService(twitchAPI);
+            if (!success)
+            {
+                return "Error getting emoticons";
+            }
 
             #if debug
             Console.WriteLine("Main thread before ReportStatistics : " + Thread.CurrentThread.ManagedThreadId);
@@ -67,36 +81,8 @@ namespace ConsoleApplication
             #endif
 
             await ConnectIRC(ss);//Await this loop its our main logic loop
-        }
 
-        public static async Task GetAPI()
-        {
-                               short[] repeat = new short[1/*0*/] { 0/*, 99, 199, 299, 399, 499, 599, 699, 799, 899*/}; // Spare API for not until rate limiting in place
-                foreach (short offset in repeat)
-                {
-                    string response = await RequestURL("/kraken/streams/", new Dictionary<string, string>() { { "limit", "10"/*100*/ }, { "offset", offset.ToString() } }, httpClient);
-                    PrintResponse(response, offset);
-                }
-                #if debug
-                Console.WriteLine("GetAPI after await : " + Thread.CurrentThread.ManagedThreadId);
-                #endif
-        }
-
-        public static async Task<string> RequestURL(string url, Dictionary<string, string> queryString, HttpClient httpClient)
-        {
-            string requestURL = string.Format("{0}{1}", url, ToQueryString(queryString));
-            HttpResponseMessage httpResponseMessage = await httpClient.GetAsync(requestURL);
-            return await httpResponseMessage.Content.ReadAsStringAsync();
-        }
-
-        public static void PrintResponse(string response, short rank)
-        {
-            dynamic jsonResponse = JsonConvert.DeserializeObject(response);
-            foreach (dynamic stream in jsonResponse["streams"])
-            {
-                Console.WriteLine($"Rank: {++rank,-5} Game: {stream["game"],-50} Viewers: {stream["viewers"],-7} Channel: {stream["channel"]["display_name"]} ");
-                concurrentDictionary[(long)stream["channel"]["_id"]] = (string)stream["channel"]["name"];
-            }
+            return "complete";
         }
 
         public static async Task ConnectIRC(StatisticsService ss)
@@ -157,7 +143,7 @@ namespace ConsoleApplication
 
         public bool BuildConfiguration()
         {
-            IConfiguration configuration = new ConfigurationBuilder()
+            configuration = new ConfigurationBuilder()
                 .AddIniFile(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..\\..\\..\\config.ini")))
                 .Build();
 
@@ -166,17 +152,81 @@ namespace ConsoleApplication
                      string.IsNullOrEmpty(configuration["twitchapi:headersclientid"]));
         }
 
-        public bool BuildChannelDictionary(short numberOfChannels)
+        public void SetupHttpClient()
+        {
+            httpClient.BaseAddress = new Uri(configuration["twitchapi:uri"]);
+
+            httpClient.DefaultRequestHeaders.Add("Accept", configuration["twitchapi:headersaccept"]);
+            httpClient.DefaultRequestHeaders.Add("Client-ID", configuration["twitchapi:headersclientid"]);
+        }
+
+        public async Task<bool> BuildChannelDictionary()
         {
             #if debug
             Console.WriteLine("BuildChannelDictionary before await : " + Thread.CurrentThread.ManagedThreadId);
             #endif
 
-            httpClient.BaseAddress = new Uri(configuration["twitchapi:uri"]);
+            short[] repeat = new short[1/*0*/] { 0/*, 99, 199, 299, 399, 499, 599, 699, 799, 899*/}; // Spare API for not until rate limiting in place
+            foreach (short offset in repeat)
+            {
+                string requestURL = string.Format("{0}{1}", "/kraken/streams/", ToQueryString(new Dictionary<string, string>() { { "limit", "100" }, { "offset", offset.ToString() } }));
+                HttpResponseMessage httpResponseMessage = await httpClient.GetAsync(requestURL);
 
-            httpClient.DefaultRequestHeaders.Add("Accept", configuration["twitchapi:headersaccept"]);
-            httpClient.DefaultRequestHeaders.Add("Client-ID", configuration["twitchapi:headersclientid"]);
+                if (!httpResponseMessage.IsSuccessStatusCode)
+                {
+                    return false;
+                }
 
+                string response = await httpResponseMessage.Content.ReadAsStringAsync();
+                dynamic jsonResponse = JsonConvert.DeserializeObject(response);
+                foreach (dynamic stream in jsonResponse["streams"])
+                {
+                    Program.concurrentDictionary[(long)stream["channel"]["_id"]] = (string)stream["channel"]["name"];
+                }
+            }
+
+            #if debug
+            Console.WriteLine("BuildChannelDictionary after await : " + Thread.CurrentThread.ManagedThreadId);
+            #endif
+
+            return true;
+        }
+
+        public async Task<List<string>> GetChatEmotes()
+        {
+            List<string> emotes = new List<string>();
+
+            #if debug
+            Console.WriteLine("GetChatEmotes before await : " + Thread.CurrentThread.ManagedThreadId);
+            #endif
+
+            HttpResponseMessage httpResponseMessage = await httpClient.GetAsync("/kraken/chat/emoticons/");
+
+            if (!httpResponseMessage.IsSuccessStatusCode)
+            {
+                return emotes;
+            }
+
+            string response = await httpResponseMessage.Content.ReadAsStringAsync();
+            dynamic jsonResponse = JsonConvert.DeserializeObject(response);
+            foreach (dynamic emoticons in jsonResponse["emoticons"])
+            {
+                foreach (dynamic emoticon in emoticons)
+                {
+                    foreach (dynamic regex in emoticon)
+                    {
+                        emotes.Add(regex.ToString());
+                        break;
+                    }
+                    break;
+                }
+            }
+
+            #if debug
+            Console.WriteLine("GetChatEmotes after await : " + Thread.CurrentThread.ManagedThreadId);
+            #endif
+
+            return emotes;
         }
     }
     public interface IMessageParser
@@ -195,13 +245,20 @@ namespace ConsoleApplication
     public class StatisticsService
     {
         HashSet<IStatCruncher> iStatCrunchers = new HashSet<IStatCruncher>();
-        public void StartService()
+        public async Task<bool> StartService(TwitchAPI twitchAPI)
         {
-            List<string> emotes = new List<string>() { "PogChamp", "4Head", "BibleThump", "FrankerZ", "BabyRage", "BrokeBack", "Jebaited", "Kappa", "Kreygasm" };
+            List<string> emotes = await twitchAPI.GetChatEmotes();
+            if (emotes.Count == 0)
+            {
+                return false;
+            }
+
             foreach (string emote in emotes)
             {
                 iStatCrunchers.Add(new EmoteStatCruncher(emote));
             }
+
+            return true;
         }
 
         public void DistributeInformation(string information)
