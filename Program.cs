@@ -253,7 +253,7 @@ namespace ConsoleApplication
                 return false;
             }
 
-            foreach (string emote in emotes)
+            foreach (string emote in emotes.Where(e => e.Length > 1)) //TODO why to S R and Q showup?
             {
                 iStatCrunchers.Add(new EmoteStatCruncher(emote));
             }
@@ -274,10 +274,17 @@ namespace ConsoleApplication
             while (true)
             {
                 Console.WriteLine();
+                List<StatisticsResult> statResults = new List<StatisticsResult>();
                 foreach (IStatCruncher iStatCruncher in iStatCrunchers)
                 {
-                    iStatCruncher.ReportStatistics();
+                    statResults.Add(iStatCruncher.ReportStatistics());
                 }
+
+                foreach (StatisticsResult statResult in statResults.OrderByDescending(sr => sr.NumberOfOccurrences).Take(20))
+                {
+                    Console.WriteLine($"{statResult.StringOfInterest,-10}: {statResult.NumberOfOccurrences}");
+                }
+
                 #if debug
                 Console.WriteLine("ReportStatistics before await : " + Thread.CurrentThread.ManagedThreadId);
                 #endif
@@ -292,7 +299,7 @@ namespace ConsoleApplication
     public interface IStatCruncher
     {
         void TryEnqueueMessage(string message);
-        void ReportStatistics();
+        StatisticsResult ReportStatistics();
     }
 
     public class EmoteStatCruncher : IStatCruncher
@@ -314,10 +321,10 @@ namespace ConsoleApplication
                 Occurrences.Enqueue(DateTime.Now);
             }
         }
-        public void ReportStatistics()
+        public StatisticsResult ReportStatistics()
         {
             RefreshStatistics();
-            Console.WriteLine($"{StringOfInterest,-10}: {Occurrences.Count}");
+            return new StatisticsResult() { NumberOfOccurrences = Occurrences.Count, StringOfInterest = StringOfInterest };
         }
         void RefreshStatistics()
         {
@@ -331,5 +338,11 @@ namespace ConsoleApplication
                 }
             }
         }
+    }
+
+    public struct StatisticsResult
+    {
+        public string StringOfInterest;
+        public int NumberOfOccurrences;
     }
 }
