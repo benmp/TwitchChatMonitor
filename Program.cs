@@ -31,6 +31,7 @@ namespace ConsoleApplication
         // Console.WriteLine("Request URL before await : " + Thread.CurrentThread.ManagedThreadId);
         static ConcurrentDictionary<long, string> concurrentDictionary = new ConcurrentDictionary<long, string>();
         static ConcurrentQueue<DateTime> concurrentQueue = new ConcurrentQueue<DateTime>();
+
         public static void Main(string[] args)
         {
             AsyncPump.Run(async delegate
@@ -70,23 +71,7 @@ namespace ConsoleApplication
 
         public static async Task GetAPI()
         {
-            #if debug
-            Console.WriteLine("GetAPI before await : " + Thread.CurrentThread.ManagedThreadId);
-            #endif
-            var configuration = new ConfigurationBuilder().AddIniFile(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..\\..\\..\\config.ini"))).Build();
-            if (string.IsNullOrEmpty(configuration["twitchapi:uri"]) || string.IsNullOrEmpty(configuration["twitchapi:headersaccept"]) ||
-                string.IsNullOrEmpty(configuration["twitchapi:headersclientid"]))
-            {
-                return;
-            }
-
-            using (HttpClient httpClient = new HttpClient())
-            {
-                httpClient.BaseAddress = new Uri(configuration["twitchapi:uri"]);
-
-                httpClient.DefaultRequestHeaders.Add("Accept", configuration["twitchapi:headersaccept"]);
-                httpClient.DefaultRequestHeaders.Add("Client-ID", configuration["twitchapi:headersclientid"]);
-                short[] repeat = new short[1/*0*/] { 0/*, 99, 199, 299, 399, 499, 599, 699, 799, 899*/}; // Spare API for not until rate limiting in place
+                               short[] repeat = new short[1/*0*/] { 0/*, 99, 199, 299, 399, 499, 599, 699, 799, 899*/}; // Spare API for not until rate limiting in place
                 foreach (short offset in repeat)
                 {
                     string response = await RequestURL("/kraken/streams/", new Dictionary<string, string>() { { "limit", "10"/*100*/ }, { "offset", offset.ToString() } }, httpClient);
@@ -95,7 +80,6 @@ namespace ConsoleApplication
                 #if debug
                 Console.WriteLine("GetAPI after await : " + Thread.CurrentThread.ManagedThreadId);
                 #endif
-            }
         }
 
         public static async Task<string> RequestURL(string url, Dictionary<string, string> queryString, HttpClient httpClient)
@@ -160,10 +144,39 @@ namespace ConsoleApplication
                 }
             }
         }
+    }
 
+    public class TwitchAPI
+    {
+        public static HttpClient httpClient { get; } = new HttpClient();
+        public IConfiguration configuration { get; set; } = null;
         public static string ToQueryString(Dictionary<string, string> source)
         {
             return string.Format("?{0}", String.Join("&", source.Select(kvp => String.Format("{0}={1}", kvp.Key, kvp.Value))));
+        }
+
+        public bool BuildConfiguration()
+        {
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddIniFile(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..\\..\\..\\config.ini")))
+                .Build();
+
+            return (!string.IsNullOrEmpty(configuration["twitchapi:uri"]) || 
+                     string.IsNullOrEmpty(configuration["twitchapi:headersaccept"]) ||
+                     string.IsNullOrEmpty(configuration["twitchapi:headersclientid"]));
+        }
+
+        public bool BuildChannelDictionary(short numberOfChannels)
+        {
+            #if debug
+            Console.WriteLine("BuildChannelDictionary before await : " + Thread.CurrentThread.ManagedThreadId);
+            #endif
+
+            httpClient.BaseAddress = new Uri(configuration["twitchapi:uri"]);
+
+            httpClient.DefaultRequestHeaders.Add("Accept", configuration["twitchapi:headersaccept"]);
+            httpClient.DefaultRequestHeaders.Add("Client-ID", configuration["twitchapi:headersclientid"]);
+
         }
     }
     public interface IMessageParser
