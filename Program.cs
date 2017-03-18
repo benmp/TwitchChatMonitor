@@ -17,7 +17,6 @@ namespace ConsoleApplication
     public class Program
     {
         //TODO
-        //Identify all emotes through api /chat
         //parse received channel messages looking for all emote in PRIVMSG only
         //print to console screen on grade % scale with ....| graphics or something cool
             //make it use console.width to determine
@@ -80,18 +79,22 @@ namespace ConsoleApplication
             Console.WriteLine("Main thread after ReportStatistics: " + Thread.CurrentThread.ManagedThreadId);
             #endif
 
-            await ConnectIRC(ss);//Await this loop its our main logic loop
+            success = await ConnectIRC(ss);//Await this loop its our main logic loop
+            if (!success)
+            {
+                return "Problem connected to IRC";
+            }
 
             return "complete";
         }
 
-        public static async Task ConnectIRC(StatisticsService ss)
+        public static async Task<bool> ConnectIRC(StatisticsService ss)
         {
             var configuration = new ConfigurationBuilder().AddIniFile(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..\\..\\..\\config.ini"))).Build();
             if (string.IsNullOrEmpty(configuration["twitchirc:servername"]) || string.IsNullOrEmpty(configuration["twitchirc:portnumber"]) ||
                 string.IsNullOrEmpty(configuration["twitchirc:oauth"]) || string.IsNullOrEmpty(configuration["twitchirc:nick"]))
             {
-                return;
+                return false;
             }
 
             using (TcpClient tcpClient = new TcpClient())
@@ -124,6 +127,10 @@ namespace ConsoleApplication
                                 await streamWriter.WriteLineAsync("PONG :time.twitch.tv");
                             }
 
+                            if (string.IsNullOrEmpty(readLine))
+                            {
+                                return false;
+                            }
                             ss.DistributeInformation(readLine);
                         }
                     }
