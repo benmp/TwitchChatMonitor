@@ -17,7 +17,6 @@ namespace ConsoleApplication
     public class Program
     {
         //TODO
-        //parse received channel messages looking for all emote in PRIVMSG only
         //print to console screen on grade % scale with ....| graphics or something cool
             //make it use console.width to determine
             //see if I can set console.height to fit top 50 emotes
@@ -26,6 +25,9 @@ namespace ConsoleApplication
         //Handle top 1000 changing (maybe streams with > 1000 viewers at any point?)
 
         //refactor classes
+
+        //Only get top english streams
+        //If getting Russian stream, convert emotes to look for russian version etc...
 
         // Console.WriteLine("Request URL before await : " + Thread.CurrentThread.ManagedThreadId);
         public static ConcurrentDictionary<long, string> concurrentDictionary = new ConcurrentDictionary<long, string>();
@@ -38,7 +40,8 @@ namespace ConsoleApplication
                 #if debug
                 Console.WriteLine("Main thread before await : " + Thread.CurrentThread.ManagedThreadId);
                 #endif
-                await MainAsync();
+                string result = await MainAsync();
+                Console.WriteLine(result);
             });
             Console.WriteLine("Complete");
         }
@@ -63,7 +66,7 @@ namespace ConsoleApplication
             Console.WriteLine("Main thread after GetAPI await : " + Thread.CurrentThread.ManagedThreadId);
             #endif
 
-            StatisticsService ss = new StatisticsService();
+            StatisticsService ss = new StatisticsService(new PRIVMSG());
             success = await ss.StartService(twitchAPI);
             if (!success)
             {
@@ -79,22 +82,16 @@ namespace ConsoleApplication
             Console.WriteLine("Main thread after ReportStatistics: " + Thread.CurrentThread.ManagedThreadId);
             #endif
 
-            success = await ConnectIRC(ss);//Await this loop its our main logic loop
-            if (!success)
-            {
-                return "Problem connected to IRC";
-            }
-
-            return "complete";
+            return await ConnectIRC(ss);//Await this loop its our main logic loop
         }
 
-        public static async Task<bool> ConnectIRC(StatisticsService ss)
+        public static async Task<string> ConnectIRC(StatisticsService ss)
         {
             var configuration = new ConfigurationBuilder().AddIniFile(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..\\..\\..\\config.ini"))).Build();
             if (string.IsNullOrEmpty(configuration["twitchirc:servername"]) || string.IsNullOrEmpty(configuration["twitchirc:portnumber"]) ||
                 string.IsNullOrEmpty(configuration["twitchirc:oauth"]) || string.IsNullOrEmpty(configuration["twitchirc:nick"]))
             {
-                return false;
+                return "Could not read IRCConfiguration";
             }
 
             using (TcpClient tcpClient = new TcpClient())
@@ -119,6 +116,7 @@ namespace ConsoleApplication
                         #if debug
                         Console.WriteLine("ConnectIRC after await : " + Thread.CurrentThread.ManagedThreadId);
                         #endif
+                        string previousLine = "";
                         while (true)
                         {
                             string readLine = await streamReader.ReadLineAsync();
@@ -129,9 +127,10 @@ namespace ConsoleApplication
 
                             if (string.IsNullOrEmpty(readLine))
                             {
-                                return false;
+                                return previousLine;
                             }
                             ss.DistributeInformation(readLine);
+                            previousLine = readLine;
                         }
                     }
                 }
@@ -249,9 +248,35 @@ namespace ConsoleApplication
         }
     }
 
+    public interface IRCCommandParser
+    {
+        bool CanProcessMessage(string message);
+        string GetIRCCommandValue(string message);
+    }
+
+    public class PRIVMSG : IRCCommandParser
+    {
+        public bool CanProcessMessage(string message)
+        {
+            string[] messageParts = message.Split(' ');
+            return messageParts.Length >=3 && messageParts[1] == "PRIVMSG";
+        }
+
+        public string GetIRCCommandValue(string message)
+        {
+            return string.Join(" ", string.Join(" ", message.Split(' ').Skip(3)).Split(':').Skip(1));
+        }
+    }
+
     public class StatisticsService
     {
+        IRCCommandParser iRCCommandParser;
         HashSet<IStatCruncher> iStatCrunchers = new HashSet<IStatCruncher>();
+
+        public StatisticsService(IRCCommandParser ircCommandParser)
+        {
+            iRCCommandParser = ircCommandParser;
+        }
         public async Task<bool> StartService(TwitchAPI twitchAPI)
         {
             List<string> emotes = await twitchAPI.GetChatEmotes();
@@ -268,11 +293,14 @@ namespace ConsoleApplication
             return true;
         }
 
-        public void DistributeInformation(string information)
+        public void DistributeInformation(string wholeReadLine)
         {
-            foreach (IStatCruncher iStatCruncher in iStatCrunchers)
+            if (iRCCommandParser.CanProcessMessage(wholeReadLine))
             {
-                iStatCruncher.TryEnqueueMessage(information);
+                foreach (IStatCruncher iStatCruncher in iStatCrunchers)
+                {
+                    iStatCruncher.TryEnqueueMessage(iRCCommandParser.GetIRCCommandValue(wholeReadLine));
+                }
             }
         }
 
