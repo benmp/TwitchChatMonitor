@@ -77,7 +77,7 @@ namespace ConsoleApplication
             Console.WriteLine("Main thread before ReportStatistics : " + Thread.CurrentThread.ManagedThreadId);
             #endif
             //intentionally not awaited so we can fire and forget our while loop, yields to this calling code after first await
-            var ignore = ss.ReportStatistics();
+            var ignore = ss.ReportStatistics(5000);
             #if debug
             Console.WriteLine("Main thread after ReportStatistics: " + Thread.CurrentThread.ManagedThreadId);
             #endif
@@ -304,10 +304,11 @@ namespace ConsoleApplication
             }
         }
 
-        public async Task ReportStatistics()
+        public async Task ReportStatistics(int updateIntervalms)
         {
             while (true)
             {
+                DateTime dt = new DateTime();
                 Console.WriteLine();
                 List<StatisticsResult> statResults = new List<StatisticsResult>();
                 foreach (IStatCruncher iStatCruncher in iStatCrunchers)
@@ -323,7 +324,15 @@ namespace ConsoleApplication
                 #if debug
                 Console.WriteLine("ReportStatistics before await : " + Thread.CurrentThread.ManagedThreadId);
                 #endif
-                await Task.Delay(5000);
+                int delayTime = updateIntervalms - (int)(new DateTime() - dt).TotalMilliseconds;
+                if (delayTime < 0)
+                {
+                    Console.WriteLine($"ReportStatistics took longer than {updateIntervalms} to complete!");
+                }
+                else
+                {
+                    await Task.Delay(delayTime);
+                }
                 #if debug
                 Console.WriteLine("ReportStatistics after await : " + Thread.CurrentThread.ManagedThreadId);
                 #endif
