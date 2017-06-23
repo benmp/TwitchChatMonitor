@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Collections.Concurrent;
 using System.Threading;
+using System.Text.RegularExpressions;
 
 namespace ConsoleApplication
 {
@@ -24,6 +25,8 @@ namespace ConsoleApplication
         //Handle channel streaming ending
         //Handle top 1000 changing (maybe streams with > 1000 viewers at any point?)
 
+        //Refresh emoticons list once per day
+
         //refactor classes
 
         //Only get top english streams
@@ -35,14 +38,12 @@ namespace ConsoleApplication
 
         public static void Main(string[] args)
         {
-            AsyncPump.Run(async delegate
-            {
-                #if debug
-                Console.WriteLine("Main thread before await : " + Thread.CurrentThread.ManagedThreadId);
-                #endif
-                string result = await MainAsync();
-                Console.WriteLine(result);
-            });
+            #if debug
+            Console.WriteLine("Main thread before await : " + Thread.CurrentThread.ManagedThreadId);
+            #endif
+            string result = MainAsync().GetAwaiter().GetResult();
+            Console.WriteLine(result);
+
             Console.WriteLine("Complete");
         }
 
@@ -94,6 +95,7 @@ namespace ConsoleApplication
                 return "Could not read IRCConfiguration";
             }
 
+            DateTime pingTime = new DateTime();
             using (TcpClient tcpClient = new TcpClient())
             {
                 #if debug
@@ -102,7 +104,7 @@ namespace ConsoleApplication
                 await tcpClient.ConnectAsync(configuration["twitchirc:servername"], Convert.ToInt32(configuration["twitchirc:portnumber"]));
                 using (StreamReader streamReader = new StreamReader(tcpClient.GetStream()))
                 {
-                    using (StreamWriter streamWriter = new StreamWriter(tcpClient.GetStream()))
+                    using (StreamWriter streamWriter = new StreamWriter(tcpClient.GetStream()){ AutoFlush = true })
                     {
                         streamWriter.AutoFlush = true;
                         await streamWriter.WriteLineAsync($"PASS oauth:{configuration["twitchirc:oauth"]}");
@@ -120,16 +122,19 @@ namespace ConsoleApplication
                         while (true)
                         {
                             string readLine = await streamReader.ReadLineAsync();
-                            if (readLine == "PING :tmi.twitch.tv")
+                            if (readLine.Contains("PING") || (DateTime.Now - pingTime).TotalMinutes > 4)
                             {
-                                await streamWriter.WriteLineAsync("PONG :time.twitch.tv");
+                                Console.WriteLine(readLine);
+                                await streamWriter.WriteLineAsync("PING :tmi.twitch.tv");
+                                await streamWriter.WriteLineAsync("PONG :tmi.twitch.tv");
+                                pingTime = DateTime.Now;
                             }
 
                             if (string.IsNullOrEmpty(readLine))
                             {
                                 return previousLine;
                             }
-                            ss.DistributeInformation(readLine);
+                            //ss.DistributeInformation(readLine);
                             previousLine = readLine;
                         }
                     }
@@ -175,7 +180,7 @@ namespace ConsoleApplication
             short[] repeat = new short[1/*0*/] { 0/*, 99, 199, 299, 399, 499, 599, 699, 799, 899*/}; // Spare API for not until rate limiting in place
             foreach (short offset in repeat)
             {
-                string requestURL = string.Format("{0}{1}", "/kraken/streams/", ToQueryString(new Dictionary<string, string>() { { "limit", "100" }, { "offset", offset.ToString() } }));
+                string requestURL = string.Format("{0}{1}", "/kraken/streams/", ToQueryString(new Dictionary<string, string>() { { "limit", "40" }, { "offset", offset.ToString() } }));
                 HttpResponseMessage httpResponseMessage = await httpClient.GetAsync(requestURL);
 
                 if (!httpResponseMessage.IsSuccessStatusCode)
@@ -198,22 +203,24 @@ namespace ConsoleApplication
             return true;
         }
 
-        public async Task<List<string>> GetChatEmotes()
+        public async Task<IEnumerable<string>> GetChatEmotes()
         {
-            List<string> emotes = new List<string>();
+            HashSet<string> emotes = new HashSet<string>();
 
             #if debug
             Console.WriteLine("GetChatEmotes before await : " + Thread.CurrentThread.ManagedThreadId);
             #endif
 
-            HttpResponseMessage httpResponseMessage = await httpClient.GetAsync("/kraken/chat/emoticons/");
+            //HttpResponseMessage httpResponseMessage = await httpClient.GetAsync("/kraken/chat/emoticons/");
 
-            if (!httpResponseMessage.IsSuccessStatusCode)
-            {
-                return emotes;
-            }
+            //if (!httpResponseMessage.IsSuccessStatusCode)
+            //{
+            //    return emotes;
+            //}
 
-            string response = await httpResponseMessage.Content.ReadAsStringAsync();
+            //string response = await httpResponseMessage.Content.ReadAsStringAsync();
+            //await System.IO.File.WriteAllTextAsync(Directory.GetCurrentDirectory() + "\\emoticons.json", response);
+            string response = await System.IO.File.ReadAllTextAsync(Directory.GetCurrentDirectory() + "\\emoticons.json");
             dynamic jsonResponse = JsonConvert.DeserializeObject(response);
             foreach (dynamic emoticons in jsonResponse["emoticons"])
             {
@@ -221,7 +228,7 @@ namespace ConsoleApplication
                 {
                     foreach (dynamic regex in emoticon)
                     {
-                        emotes.Add(regex.ToString());
+                        emotes.Add($" {regex.ToString()} ");
                         break;
                     }
                     break;
@@ -244,7 +251,8 @@ namespace ConsoleApplication
     {
         public int NumberOfOccurences(string message, string stringOfInterest)
         {
-            return message.Contains(stringOfInterest) ? 1 : 0;
+            return Regex.Matches(message, stringOfInterest).Count;
+            //return message.Contains(stringOfInterest) ? 1 : 0;
         }
     }
 
@@ -279,8 +287,8 @@ namespace ConsoleApplication
         }
         public async Task<bool> StartService(TwitchAPI twitchAPI)
         {
-            List<string> emotes = await twitchAPI.GetChatEmotes();
-            if (emotes.Count == 0)
+            IEnumerable<string> emotes = await twitchAPI.GetChatEmotes();
+            if (!emotes.Any())
             {
                 return false;
             }
@@ -309,20 +317,20 @@ namespace ConsoleApplication
             while (true)
             {
                 DateTime dt = new DateTime();
-                Console.WriteLine();
+                //Console.WriteLine();
                 List<StatisticsResult> statResults = new List<StatisticsResult>();
                 foreach (IStatCruncher iStatCruncher in iStatCrunchers)
                 {
                     statResults.Add(iStatCruncher.ReportStatistics());
                 }
 
-                foreach (StatisticsResult statResult in statResults.OrderByDescending(sr => sr.NumberOfOccurrences).Take(20))
-                {
-                    Console.WriteLine($"{statResult.StringOfInterest,-10}: {statResult.NumberOfOccurrences}");
-                }
+                //foreach (StatisticsResult statResult in statResults.OrderByDescending(sr => sr.NumberOfOccurrences).Take(20))
+                //{
+                    //Console.WriteLine($"{statResult.StringOfInterest,-10}: {statResult.NumberOfOccurrences}");
+                //}
 
                 #if debug
-                Console.WriteLine("ReportStatistics before await : " + Thread.CurrentThread.ManagedThreadId);
+                //Console.WriteLine("ReportStatistics before await : " + Thread.CurrentThread.ManagedThreadId);
                 #endif
                 int delayTime = updateIntervalms - (int)(new DateTime() - dt).TotalMilliseconds;
                 if (delayTime < 0)
@@ -334,7 +342,7 @@ namespace ConsoleApplication
                     await Task.Delay(delayTime);
                 }
                 #if debug
-                Console.WriteLine("ReportStatistics after await : " + Thread.CurrentThread.ManagedThreadId);
+                //Console.WriteLine("ReportStatistics after await : " + Thread.CurrentThread.ManagedThreadId);
                 #endif
             }
         }
